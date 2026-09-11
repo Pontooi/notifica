@@ -1,0 +1,185 @@
+name: Gerar APK Notifica
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # 1. BAIXAR PROJETO
+      - name: Baixar projeto
+        uses: actions/checkout@v4
+
+      # 2. JAVA 21
+      - name: Configurar Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # 3. NODE 22
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 4. INSTALAR CAPACITOR 7
+      - name: Criar projeto
+        run: |
+          npm init -y
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+
+      # 5. PÁGINA LOCAL MÍNIMA
+      - name: Criar página mínima
+        run: |
+          mkdir -p www
+          cat > www/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Notifica App</title>
+          </head>
+          <body>
+            <p>Carregando Notifica App...</p>
+          </body>
+          </html>
+          EOF
+
+      # 6. CONFIGURAR CAPACITOR (REPOSITÓRIO NOTIFICA)
+      - name: Configurar Capacitor
+        run: |
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.almeida.notifica",
+            "appName": "Notifica App",
+            "webDir": "www",
+            "server": {
+              "url": "https://almeida-cma.github.io/notifica/",
+              "cleartext": false
+            }
+          }
+          EOF
+
+      # 7. ADICIONAR PLATAFORMA ANDROID
+      - name: Adicionar Android
+        run: npx cap add android
+
+      # 8. ADICIONAR PERMISSÕES NO MANIFEST
+      - name: Configurar permissões Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          content = manifest.read_text()
+
+          permissions = [
+              "android.permission.INTERNET",
+              "android.permission.POST_NOTIFICATIONS",
+              "android.permission.VIBRATE",
+              "android.permission.CAMERA",
+              "android.permission.ACCESS_FINE_LOCATION",
+              "android.permission.ACCESS_COARSE_LOCATION"
+          ]
+
+          for permission in permissions:
+              tag = f'    <uses-permission android:name="{permission}" />'
+              if tag not in content:
+                  content = content.replace("<application", tag + "
+
+    <application", 1)
+
+          manifest.write_text(content)
+          print("Permissões configuradas no AndroidManifest.xml.")
+          PY
+
+      # 9. CONFIGURAR MAINACTIVITY COM PONTE NATIVA DE NOTIFICAÇÃO (JAVASCRIPTINTERFACE)
+      - name: Configurar MainActivity Android
+        run: |
+          cat > android/app/src/main/java/com/almeida/notifica/MainActivity.java <<'EOF'
+          package com.almeida.notifica;
+
+          import android.Manifest;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.content.Context;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebView;
+          import androidx.core.app.NotificationCompat;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+
+              private static final String CANAL_ID = "canal_notifica_app";
+
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  criarCanalNotificacao();
+
+                  WebView webView = getBridge().getWebView();
+                  webView.getSettings().setJavaScriptEnabled(true);
+                  webView.getSettings().setDomStorageEnabled(true);
+
+                  // Cria a Ponte Nativa Java acessível pelo JavaScript (window.AndroidBridge)
+                  webView.addJavascriptInterface(new Object() {
+                      @JavascriptInterface
+                      public void dispararNotificacao(String titulo, String mensagem) {
+                          NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                          
+                          NotificationCompat.Builder builder = new NotificationCompat.Builder(MainActivity.this, CANAL_ID)
+                              .setSmallIcon(android.R.drawable.ic_dialog_info)
+                              .setContentTitle(titulo)
+                              .setContentText(mensagem)
+                              .setPriority(NotificationCompat.PRIORITY_HIGH)
+                              .setAutoCancel(true);
+
+                          if (manager != null) {
+                              manager.notify((int) System.currentTimeMillis(), builder.build());
+                          }
+                      }
+                  }, "AndroidBridge");
+              }
+
+              private void criarCanalNotificacao() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      NotificationChannel canal = new NotificationChannel(
+                          CANAL_ID,
+                          "Avisos do Notifica App",
+                          NotificationManager.IMPORTANCE_HIGH
+                      );
+                      canal.setDescription("Canal de avisos e cupons do aplicativo");
+                      NotificationManager manager = getSystemService(NotificationManager.class);
+                      if (manager != null) {
+                          manager.createNotificationChannel(canal);
+                      }
+                  }
+              }
+          }
+          EOF
+
+      # 10. SINCRONIZAR CAPACITOR
+      - name: Sincronizar Capacitor
+        run: npx cap sync android
+
+      # 11. GERAR APK COM GRADLE
+      - name: Gerar APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      # 12. DISPONIBILIZAR APK PARA DOWNLOAD
+      - name: Disponibilizar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Notifica-App-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
