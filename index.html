@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi App - Notificações</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            color: #f8fafc;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .app-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 20px;
+            padding: 24px;
+            max-width: 440px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+            position: relative;
+        }
+
+        h1 { font-size: 1.5rem; color: #38bdf8; margin-bottom: 6px; }
+        p.sub { font-size: 0.85rem; color: #94a3b8; margin-bottom: 18px; }
+
+        .btn {
+            background: #ec4899;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 30px;
+            font-size: 0.9rem;
+            font-weight: 700;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 10px;
+            transition: 0.2s;
+        }
+        .btn:hover { opacity: 0.9; transform: scale(1.02); }
+        .btn.sec { background: #3b82f6; }
+
+        /* Banner de Notificação Flutuante no topo */
+        #banner-notif {
+            display: none;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 14px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            text-align: left;
+            animation: slideDown 0.3s ease-out;
+            box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3);
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .terminal-box {
+            background: #090d16;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 14px;
+            text-align: left;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #a78bfa;
+            line-height: 1.6;
+            margin-top: 14px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        .badge-status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-bottom: 12px;
+        }
+        .badge-ok { background: #065f46; color: #34d399; }
+        .badge-pendente { background: #854d0e; color: #fde047; }
+        .badge-bloqueado { background: #991b1b; color: #fca5a5; }
+    </style>
+</head>
+<body>
+
+    <div class="app-card">
+        <!-- Banner de Notificação Flutuante (In-App) -->
+        <div id="banner-notif">
+            <strong id="banner-titulo">🔔 Novo Aviso</strong>
+            <p id="banner-msg" style="font-size:0.8rem; margin-top:4px;"></p>
+        </div>
+
+        <h1>🔔 Multi App &bull; Avisos</h1>
+        <p class="sub">Monitoramento remoto via <code>notificacao.json</code></p>
+
+        <div id="badge-perm" class="badge-status badge-pendente">
+            Verificando sistema...
+        </div>
+
+        <button class="btn" id="btn-perm" onclick="solicitarPermissao()">
+            🔔 Ativar Notificações
+        </button>
+
+        <button class="btn sec" onclick="verificarNotificacoesRemotas()">
+            🔄 Checar Atualizações Agora
+        </button>
+
+        <div class="terminal-box" id="log-box">Aguardando inicialização...</div>
+    </div>
+
+    <script>
+        const logBox = document.getElementById("log-box");
+        const badgePerm = document.getElementById("badge-perm");
+        const btnPerm = document.getElementById("btn-perm");
+
+        // 1. ATUALIZA O STATUS DO SISTEMA
+        function atualizarBadge() {
+            // Se estiver rodando dentro do APK com a Ponte Nativa Java
+            if (window.AndroidBridge && typeof window.AndroidBridge.dispararNotificacao === "function") {
+                badgePerm.className = "badge-status badge-ok";
+                badgePerm.innerText = "✅ APK Nativo (Ponte Java Conectada)";
+                btnPerm.style.display = "none";
+                return;
+            }
+
+            // Se estiver rodando no navegador com suporte Web
+            if ("Notification" in window) {
+                if (Notification.permission === "granted") {
+                    badgePerm.className = "badge-status badge-ok";
+                    badgePerm.innerText = "✅ Notificações Web Ativadas";
+                    btnPerm.style.display = "none";
+                } else if (Notification.permission === "denied") {
+                    badgePerm.className = "badge-status badge-bloqueado";
+                    badgePerm.innerText = "❌ Notificações Bloqueadas";
+                } else {
+                    badgePerm.className = "badge-status badge-pendente";
+                    badgePerm.innerText = "⚠️ Permissão Pendente";
+                }
+            } else {
+                // Fallback para WebViews sem ponte
+                badgePerm.className = "badge-status badge-ok";
+                badgePerm.innerText = "📱 Modo Móvel (Notificações em Tela)";
+                btnPerm.style.display = "none";
+            }
+        }
+
+        // 2. SOLICITAR PERMISSÃO (NO NAVEGADOR OU NO APK)
+        async function solicitarPermissao() {
+            if ("Notification" in window) {
+                const res = await Notification.requestPermission();
+                atualizarBadge();
+                if (res === "granted") {
+                    log("✅ Permissão concedida pelo usuário!");
+                    verificarNotificacoesRemotas();
+                } else {
+                    log("❌ Permissão negada pelo usuário.");
+                }
+            } else {
+                log("ℹ️ Ambiente móvel: notificações ativas via tela e vibração.");
+            }
+        }
+
+        // 3. CONSULTA O ARQUIVO NOTIFICACAO.JSON NO GITHUB
+        async function verificarNotificacoesRemotas() {
+            log("🔍 Verificando 'notificacao.json'...");
+
+            try {
+                const resposta = await fetch("./notificacao.json?t=" + Date.now());
+                if (!resposta.ok) throw new Error("Status HTTP " + resposta.status);
+
+                const dados = await resposta.json();
+                log(`📦 JSON Lido:\nID: ${dados.id} | Ativo: ${dados.notificacao}\nTítulo: "${dados.titulo}"`);
+
+                if (dados.notificacao === true) {
+                    const ultimoIdLido = localStorage.getItem("ultimo_id_notificacao");
+
+                    if (String(dados.id) !== String(ultimoIdLido)) {
+                        dispararNotificacao(dados);
+                        localStorage.setItem("ultimo_id_notificacao", String(dados.id));
+                    } else {
+                        log("ℹ️ Notificação ID " + dados.id + " já foi exibida anteriormente.");
+                    }
+                } else {
+                    log("ℹ️ Nenhuma notificação ativa no momento ('notificacao': false).");
+                }
+
+            } catch (erro) {
+                log("⚠️ Erro ao consultar notificacao.json: " + erro.message);
+            }
+        }
+
+        // 4. DISPARA A NOTIFICAÇÃO (NATIVA JAVA, WEB OU BANNER NA TELA)
+        function dispararNotificacao(dados) {
+            // Vibração no celular
+            if ("vibrate" in navigator) {
+                navigator.vibrate([100, 50, 100]);
+            }
+
+            // Exibe o Banner visual dentro do app
+            const banner = document.getElementById("banner-notif");
+            document.getElementById("banner-titulo").innerText = dados.titulo;
+            document.getElementById("banner-msg").innerText = dados.mensagem;
+            banner.style.display = "block";
+
+            // A. Tenta disparar via Ponte Nativa Java do APK (Barra do Android)
+            if (window.AndroidBridge && typeof window.AndroidBridge.dispararNotificacao === "function") {
+                window.AndroidBridge.dispararNotificacao(dados.titulo, dados.mensagem);
+                log("🚀 Notificação enviada para a Barra do Android via Ponte Nativa!");
+                return;
+            }
+
+            // B. Tenta disparar via Notification API Web (Desktop/Navegador)
+            if ("Notification" in window && Notification.permission === "granted") {
+                try {
+                    new Notification(dados.titulo, {
+                        body: dados.mensagem,
+                        icon: "https://cdn-icons-png.flaticon.com/512/726/726476.png"
+                    });
+                    log("🚀 Notificação Web disparada!");
+                    return;
+                } catch (e) {}
+            }
+
+            log("📢 Alerta exibido na tela com vibração!");
+        }
+
+        function log(msg) {
+            const hora = new Date().toLocaleTimeString();
+            logBox.innerText = `[${hora}] ${msg}\n\n` + logBox.innerText;
+        }
+
+        // 5. INICIALIZAÇÃO E MONITORAMENTO A CADA 15 SEGUNDOS
+        window.addEventListener("DOMContentLoaded", () => {
+            atualizarBadge();
+            verificarNotificacoesRemotas();
+            setInterval(verificarNotificacoesRemotas, 15000);
+        });
+    </script>
+</body>
+</html>
